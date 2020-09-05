@@ -1,0 +1,101 @@
+def label = "docker-${UUID.randomUUID().toString()}"
+
+podTemplate(label: label, yaml: """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: docker
+    image: docker:19.03
+    command: ['cat']
+    tty: true
+    volumeMounts:
+    - name: dockersock
+      mountPath: /var/run/docker.sock
+    - name: docker-config
+      mountPath: /root/.docker
+  - name: kubectl
+    image: lachlanevenson/k8s-kubectl:v1.18.8
+    command: [cat]
+    tty: true
+    volumeMounts:
+    - name: dockersock
+      mountPath: /var/run/docker.sock
+    - name: docker-config
+      mountPath: /root/.docker
+  volumes:
+  - name: dockersock
+    hostPath:
+      path: /var/run/docker.sock
+  - name: docker-config
+    configMap:
+      name: docker-config
+"""
+  ) {
+
+  def imagetag = new Date().format('yyyyMMdd.HHmmss')
+  def image = "joanatanasoff/dof-nginx:${imagetag}"
+  def image1 = "joanatanasoff/dof-php:${imagetag}"
+ 
+  
+  node(label) 
+  {
+    stage('Build Docker image') 
+    {
+      git 'https://github.com/joanatanasoff/dof-exam.git'
+
+      dir ("nginx") {
+          container('docker') {
+                sh "docker build -t ${image} ."
+          }
+      }
+    }
+    stage ("Push")
+    {
+      container('docker') 
+      {
+        sh "docker push ${image}"
+      }
+    }
+    stage ("Apply the changes with kubectl")
+    {
+      container('kubectl') 
+      {
+        sh "sed 's/%IMAGE-PLACEHOLDER%/${imagetag}/g' -i nginx-host-deployment.yaml"
+        sh "kubectl apply --validate=false -f nginx-host-deployment.yaml"
+        sh "kubectl apply --validate=false -f nginx-host-service.yaml"
+      }
+    }
+  }
+    node(label) 
+  {
+    stage('Build Docker image') 
+    {
+      git 'https://github.com/joanatanasoff/dof-exam.git'
+
+      dir ("php") {
+          container('docker') {
+                sh "docker build -t ${image1} ."
+          }
+      }
+    }
+    stage ("Push")
+    {
+      container('docker') 
+      {
+        sh "docker push ${image1}"
+      }
+    }
+    stage ("Apply the changes with kubectl")
+    {
+      container('kubectl') 
+      {
+        sh "sed 's/%IMAGE-PLACEHOLDER%/${imagetag}/g' -i php-host-deployment.yaml"
+        sh "kubectl apply --validate=false -f php-host-deployment.yaml"
+        sh "kubectl apply --validate=false -f php-host-service.yaml"
+        sh "kubectl apply --validate=false -f redis-host-deployment.yaml"
+        sh "kubectl apply --validate=false -f redis-host-service.yaml"
+      }
+    }
+  }
+}
